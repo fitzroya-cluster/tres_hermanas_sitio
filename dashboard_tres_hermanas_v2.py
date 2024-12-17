@@ -48,7 +48,7 @@ st.markdown('<div class="main-title">Estación Tres Hermanas</div>', unsafe_allo
 # Cargar datos
 @st.cache_data
 def load_data():
-    data = pd.read_csv("base_de_datos_3_hermanas.csv", parse_dates=["TIMESTAMP"])
+    data = pd.read_csv("base_de_datos_3_hermanas.csv.gz", compression="gzip", parse_dates=["TIMESTAMP"])
     data.set_index("TIMESTAMP", inplace=True)
     return data
 
