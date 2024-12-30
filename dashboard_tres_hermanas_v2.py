@@ -1,41 +1,52 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 # Configurar la página
-st.set_page_config(page_title="Estación Tres Hermanas", layout="wide")
+st.set_page_config(page_title="Visualizador de datos estación Tres Hermanas", layout="wide")
 
-# CSS avanzado para la estética
+# CSS avanzado para el diseño Oscuro Futurista
 st.markdown(
     """
     <style>
     body, .stApp {
-        background-color: #f8f9fa;
+        background-color: #1C1C1C;
         font-family: 'Montserrat', sans-serif;
-        color: #333333;
+        color: #F0F0F0;
     }
     .main-title {
-        font-size: 3rem;
+        font-size: 3.5rem;
         font-weight: bold;
-        color: #1F4E79;
         text-align: center;
-        padding: 1.5rem 0;
-        background: linear-gradient(to right, #e3f2fd, #ffffff);
-        border-radius: 12px;
-        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        color: white;
+        padding: 1rem 0;
     }
     .filter-box, .chart-card {
-        background-color: white;
-        border-radius: 12px;
+        background-color: #292929;
+        border-radius: 16px;
         padding: 1.5rem;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        margin-bottom: 1.5rem;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.5);
+        margin-bottom: 2rem;
+        border: 1px solid #3C3C3C;
     }
     .section-title {
-        font-size: 1.5rem;
+        font-size: 1.8rem;
         font-weight: 600;
-        color: #1F4E79;
         margin-bottom: 1rem;
+        color: #00E5FF;
+    }
+    .stButton>button {
+        background-color: #76FF03;
+        color: black;
+        border-radius: 12px;
+        padding: 0.5rem 1rem;
+        font-size: 1rem;
+        font-weight: bold;
+        border: none;
+    }
+    .stButton>button:hover {
+        background-color: #64DD17;
     }
     </style>
     """,
@@ -43,7 +54,7 @@ st.markdown(
 )
 
 # Encabezado principal
-st.markdown('<div class="main-title">Estación Tres Hermanas</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-title">📊 Visualizador de datos estación Tres Hermanas</div>', unsafe_allow_html=True)
 
 # Cargar datos
 @st.cache_data
@@ -78,75 +89,126 @@ def assign_season(date):
 filtered_data["Season_Year"] = filtered_data.index.map(assign_season)
 
 # Agrupaciones
-agg_functions = {
-    "Rain_mm_Tot": "sum",
-    "AirTC_Avg": "mean", "RH_Avg": "mean", "BP_mbar_Avg": "mean", "PTemp_C_Avg": "mean",
-    "PtoRocio_Avg": "mean", "WS_ms_Avg": "mean", "incomingSW_Avg": "mean",
-    "outgoingSW_Avg": "mean", "incomingLW_Avg": "mean", "outgoingLW_Avg": "mean",
-    "albedo_Avg": "mean"
-}
+agg_functions = {col: "mean" for col in data.columns if col != "Rain_mm_Tot"}
+agg_functions["Rain_mm_Tot"] = "sum"
+
 daily_data = filtered_data.resample("D").agg(agg_functions)
 monthly_data = filtered_data.resample("ME").agg(agg_functions)
 seasonal_data = filtered_data.groupby("Season_Year").agg(agg_functions).reset_index()
 
 # Función para crear gráficos dinámicos
 def create_dynamic_graph(resolution, variable, y_title):
+    if resolution == "Cada 15 minutos":
+        df = filtered_data
+    elif resolution == "Diaria":
+        df = daily_data
+    elif resolution == "Mensual":
+        df = monthly_data
+    elif resolution == "Estacional":
+        df = seasonal_data
+        df.set_index("Season_Year", inplace=True)
+
     fig = go.Figure()
 
-    if resolution == "Cada 15 minutos":
-        fig.add_trace(go.Scatter(x=filtered_data.index, y=filtered_data[variable],
-                                 mode='lines', name="Datos Crudos (15 min)",
-                                 line=dict(color="#1f77b4", width=1)))
+    if resolution == "Estacional":
+        fig.add_trace(go.Bar(x=df.index, y=df[variable],
+                             name=y_title, marker_color="#FF6F61"))
+    else:
+        fig.add_trace(go.Scatter(x=df.index, y=df[variable],
+                                 mode='lines', name=y_title,
+                                 line=dict(color="#FF6F61", width=2)))
 
-    elif resolution == "Diaria":
-        fig.add_trace(go.Scatter(x=daily_data.index, y=daily_data[variable],
-                                 mode='lines+markers', name="Promedio Diario",
-                                 line=dict(color="#ff5733", width=2)))
-
-    elif resolution == "Mensual":
-        fig.add_trace(go.Scatter(x=monthly_data.index, y=monthly_data[variable],
-                                 mode='lines+markers', name="Promedio Mensual",
-                                 line=dict(color="#2ca02c", width=2)))
-
-    elif resolution == "Estacional":
-        fig.add_trace(go.Bar(x=seasonal_data["Season_Year"], y=seasonal_data[variable],
-                             name="Promedio Estacional", marker_color="#f39c12"))
-
-    # Configurar el layout
     fig.update_layout(
         title=f"{resolution} - {y_title}",
         xaxis_title="Fecha",
         yaxis_title=y_title,
-        font=dict(size=14, color="black"),
-        xaxis=dict(tickfont=dict(size=12, color="black")),
-        yaxis=dict(tickfont=dict(size=12, color="black")),
-        legend=dict(font=dict(size=12, color="black")),
-        plot_bgcolor="white",
-        paper_bgcolor="white"
+        font=dict(family="Montserrat", size=14, color="white"),
+        xaxis=dict(tickfont=dict(size=12, color="white")),
+        yaxis=dict(tickfont=dict(size=12, color="white")),
+        legend=dict(font=dict(size=12, color="white")),
+        plot_bgcolor="#292929",
+        paper_bgcolor="#292929"
     )
+    return fig
+
+# Función para crear gráfico combinado "Combinada"
+def create_puelche_graph(resolution):
+    if resolution == "Cada 15 minutos":
+        df = filtered_data
+    elif resolution == "Diaria":
+        df = daily_data
+    elif resolution == "Mensual":
+        df = monthly_data
+    elif resolution == "Estacional":
+        df = seasonal_data
+        df.set_index("Season_Year", inplace=True)
+
+    fig = make_subplots(
+        rows=4, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.05,
+        subplot_titles=("Temperatura (°C)", "Humedad (%)", "Velocidad del Viento (m/s)", "Dirección del Viento (°)")
+    )
+
+    # Subgráficos
+    if resolution == "Estacional":
+        fig.add_trace(go.Bar(x=df.index, y=df["AirTC_Avg"],
+                             name="Temperatura", marker_color="#FF6F61"),
+                      row=1, col=1)
+        fig.add_trace(go.Bar(x=df.index, y=df["RH_Avg"],
+                             name="Humedad", marker_color="#4FC3F7"),
+                      row=2, col=1)
+        fig.add_trace(go.Bar(x=df.index, y=df["WS_ms_Avg"],
+                             name="Velocidad del Viento", marker_color="#81C784"),
+                      row=3, col=1)
+        fig.add_trace(go.Bar(x=df.index, y=df["WindDir_Avg"],
+                             name="Dirección del Viento", marker_color="#388E3C"),
+                      row=4, col=1)
+    else:
+        fig.add_trace(go.Scatter(x=df.index, y=df["AirTC_Avg"],
+                                 mode='lines', name="Temperatura",
+                                 line=dict(color="#FF6F61", width=2)),
+                      row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df["RH_Avg"],
+                                 mode='lines', name="Humedad",
+                                 line=dict(color="#4FC3F7", width=2)),
+                      row=2, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df["WS_ms_Avg"],
+                                 mode='lines', name="Velocidad del Viento",
+                                 line=dict(color="#81C784", width=2)),
+                      row=3, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df["WindDir_Avg"],
+                                 mode='lines', name="Dirección del Viento",
+                                 line=dict(color="#388E3C", width=2)),
+                      row=4, col=1)
+
+    # Configuración
+    fig.update_layout(
+        height=900,
+        title=f"Combinada - Comparación de Variables Clave ({resolution})",
+        font=dict(family="Montserrat", size=14, color="white"),
+        xaxis=dict(tickfont=dict(size=12, color="white")),
+        yaxis=dict(tickfont=dict(size=12, color="white")),
+        legend=dict(font=dict(size=12, color="white")),
+        plot_bgcolor="#292929",
+        paper_bgcolor="#292929",
+        showlegend=True
+    )
+
     return fig
 
 # Selector de variable y resolución temporal
 st.markdown('<div class="chart-card">', unsafe_allow_html=True)
-variables = {
-    "Precipitación Total (mm)": "Rain_mm_Tot",
-    "Temperatura Promedio (°C)": "AirTC_Avg",
-    "Humedad Relativa Promedio (%)": "RH_Avg",
-    "Presión Barométrica (mbar)": "BP_mbar_Avg",
-    "Temperatura Sensor (°C)": "PTemp_C_Avg",
-    "Punto de Rocío (°C)": "PtoRocio_Avg",
-    "Velocidad del Viento (m/s)": "WS_ms_Avg",
-    "Radiación SW Entrante (W/m²)": "incomingSW_Avg",
-    "Radiación SW Saliente (W/m²)": "outgoingSW_Avg",
-    "Radiación LW Entrante (W/m²)": "incomingLW_Avg",
-    "Radiación LW Saliente (W/m²)": "outgoingLW_Avg",
-    "Albedo Promedio": "albedo_Avg"
-}
+variables = {"Combinada: Temperatura, Humedad y Viento": None}
+variables.update({col: col for col in data.columns})
 selected_var = st.selectbox("Selecciona una variable:", list(variables.keys()))
 resolution = st.selectbox("Selecciona la resolución temporal:", ["Cada 15 minutos", "Diaria", "Mensual", "Estacional"])
 
 # Mostrar el gráfico
-fig = create_dynamic_graph(resolution, variables[selected_var], selected_var)
+if selected_var == "Combinada: Temperatura, Humedad y Viento":
+    fig = create_puelche_graph(resolution)
+else:
+    fig = create_dynamic_graph(resolution, variables[selected_var], selected_var)
 st.plotly_chart(fig, use_container_width=True)
 st.markdown('</div>', unsafe_allow_html=True)
 
