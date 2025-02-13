@@ -1,3 +1,5 @@
+folium
+metpy
 pandas
 plotly
 streamlit
