@@ -1,4 +1,4 @@
-WindroseAxes
+windrose
 streamlit-folium
 metpy
 pandas
