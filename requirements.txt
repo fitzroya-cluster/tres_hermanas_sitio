@@ -1,5 +1,4 @@
 folium
-st_folium
 metpy
 pandas
 plotly
