@@ -1,62 +1,30 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+import folium
+from streamlit_folium import st_folium
 from plotly.subplots import make_subplots
+import numpy as np
+import metpy.calc as mpcalc
+from metpy.units import units
+import matplotlib.pyplot as plt
+from windrose import WindroseAxes
+import io
 
 # Configurar la página
-st.set_page_config(page_title="Visualizador de datos estación Tres Hermanas", layout="wide")
+st.set_page_config(page_title="Visualizador de datos estación Tres Hermanas", layout="wide", initial_sidebar_state="expanded")
 
-# CSS avanzado para el diseño Oscuro Futurista
-st.markdown(
-    """
+# Inyectar CSS para fijar el ancho máximo de algunos contenedores (opcional)
+st.markdown("""
     <style>
-    body, .stApp {
-        background-color: #1C1C1C;
-        font-family: 'Montserrat', sans-serif;
-        color: #F0F0F0;
-    }
-    .main-title {
-        font-size: 3.5rem;
-        font-weight: bold;
-        text-align: center;
-        color: white;
-        padding: 1rem 0;
-    }
-    .filter-box, .chart-card {
-        background-color: #292929;
-        border-radius: 16px;
-        padding: 1.5rem;
-        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.5);
-        margin-bottom: 2rem;
-        border: 1px solid #3C3C3C;
-    }
-    .section-title {
-        font-size: 1.8rem;
-        font-weight: 600;
-        margin-bottom: 1rem;
-        color: #00E5FF;
-    }
-    .stButton>button {
-        background-color: #76FF03;
-        color: black;
-        border-radius: 12px;
-        padding: 0.5rem 1rem;
-        font-size: 1rem;
-        font-weight: bold;
-        border: none;
-    }
-    .stButton>button:hover {
-        background-color: #64DD17;
+    .fixed-figure {
+        max-width: 600px;
+        margin: auto;
     }
     </style>
-    """,
-    unsafe_allow_html=True,
-)
+    """, unsafe_allow_html=True)
 
-# Encabezado principal
-st.markdown('<div class="main-title">📊 Visualizador de datos estación Tres Hermanas</div>', unsafe_allow_html=True)
-
-# Cargar datos
+# Función para cargar datos
 @st.cache_data
 def load_data():
     data = pd.read_csv("base_de_datos_3_hermanas.csv.gz", compression="gzip", parse_dates=["TIMESTAMP"])
@@ -65,159 +33,162 @@ def load_data():
 
 data = load_data()
 
-# Filtros
-st.markdown('<div class="filter-box">', unsafe_allow_html=True)
-col1, col2 = st.columns(2)
-start_date = col1.date_input("Fecha de inicio", value=data.index.min())
-end_date = col2.date_input("Fecha de término", value=data.index.max())
-st.markdown('</div>', unsafe_allow_html=True)
-filtered_data = data.loc[start_date:end_date].copy()
+# Filtros en la barra lateral
+st.sidebar.title("📊 Selección de Variables")
+variables_disponibles = {
+    "Temperatura (°C)": "AirTC_Avg",
+    "Humedad (%)": "RH_Avg",
+    "Velocidad del Viento (m/s)": "WS_ms_Avg",
+    "Dirección del Viento (°)": "WindDir_Avg",
+    "Presión Atmosférica (hPa)": "BP_mbar_Avg",
+    "Radiación Solar (W/m²)": "incomingSW_Avg",
+    "Radiación de onda corta saliente (W/m²)": "outgoingSW_Avg",
+    "Radiación de onda larga entrante (W/m²)": "incomingLW_Avg",
+    "Albedo (%)": "albedo_Avg",
+    "Precipitación (mm)": "Rain_mm_Tot",
+    "Punto de Rocío (°C)": "PtoRocio_Avg",
+    "Temperatura del Suelo a 50 cm (°C)": "T107_50cm_Avg",
+    "Temperatura del Suelo a 10 cm (°C)": "T107_10cm_Avg",
+    "Humedad del Suelo (%)": "SoilMoisture_Avg",
+    "Rosa de los Vientos": "Wind_Rose"
+}
+default_vars = ["Temperatura (°C)", "Radiación Solar (W/m²)", "Rosa de los Vientos"]
+variables_seleccionadas = st.sidebar.multiselect(
+    "Selecciona las variables a visualizar:",
+    list(variables_disponibles.keys()),
+    default=default_vars
+)
 
-# Clasificar estaciones correctamente
-def assign_season(date):
-    if date.month == 12:
-        return f"{date.year + 1}-Verano"
-    elif date.month in [1, 2]:
-        return f"{date.year}-Verano"
-    elif date.month in [3, 4, 5]:
-        return f"{date.year}-Otoño"
-    elif date.month in [6, 7, 8]:
-        return f"{date.year}-Invierno"
-    else:
-        return f"{date.year}-Primavera"
+if not variables_seleccionadas:
+    st.warning("Por favor, selecciona al menos una variable para visualizar.")
+    st.stop()
 
-filtered_data["Season_Year"] = filtered_data.index.map(assign_season)
+# Encabezados principales
+st.title("Fundación Mar Adentro")
+st.header("Bosque Pehuén")
+st.subheader("📊 Visualización de Variables Meteorológicas estación Tres Hermanas")
 
-# Agrupaciones
-agg_functions = {col: "mean" for col in data.columns if col != "Rain_mm_Tot"}
-agg_functions["Rain_mm_Tot"] = "sum"
+# Slider para rango de fechas
+st.subheader("📅 Selección de Rango Temporal")
+min_date = data.index.min().date()
+max_date = data.index.max().date()
+start_date, end_date = st.slider(
+    "Selecciona el rango de fechas:",
+    min_value=min_date,
+    max_value=max_date,
+    value=(min_date, max_date),
+    format="YYYY-MM-DD"
+)
+filtered_data = data.loc[str(start_date):str(end_date)]
 
-daily_data = filtered_data.resample("D").agg(agg_functions)
-monthly_data = filtered_data.resample("ME").agg(agg_functions)
-seasonal_data = filtered_data.groupby("Season_Year").agg(agg_functions).reset_index()
+# Resolución temporal en la barra lateral
+st.sidebar.title("⏳ Selección de Resolución Temporal")
+resoluciones = {
+    "Cada 15 minutos": "15min",
+    "Diaria": "D",
+    "Mensual": "ME",
+    "Estacional (3 meses)": "Q"
+}
+resolucion_seleccionada = st.sidebar.radio(
+    "Selecciona la resolución temporal:",
+    list(resoluciones.keys()),
+    index=1
+)
 
-# Función para crear gráficos dinámicos
-def create_dynamic_graph(resolution, variable, y_title):
-    if resolution == "Cada 15 minutos":
-        df = filtered_data
-    elif resolution == "Diaria":
-        df = daily_data
-    elif resolution == "Mensual":
-        df = monthly_data
-    elif resolution == "Estacional":
-        df = seasonal_data
-        df.set_index("Season_Year", inplace=True)
+# Mapa de ubicación en la barra lateral
+st.sidebar.title("🌍 Ubicación de la estación")
+with st.sidebar:
+    mapa = folium.Map(location=[-39.4167, -71.75], zoom_start=6)
+    folium.Marker(
+        [-39.4167, -71.75],
+        popup="Estación Tres Hermanas",
+        tooltip="Estación Meteorológica"
+    ).add_to(mapa)
+    st_folium(mapa, width=300, height=350)
 
-    fig = go.Figure()
+# Función para reagrupar los datos usando MetPy para calcular u y v,
+# luego promediar y recalcular la dirección del viento a partir de ellos.
+def resample_data(df, resolution):
+    df_copy = df.copy()
+    # Calcular u y v usando MetPy (convención: u = -ws*sin(wd), v = -ws*cos(wd))
+    ws = df_copy["WS_ms_Avg"].values * units("m/s")
+    wd = df_copy["WindDir_Avg"].values * units.deg
+    u, v = mpcalc.wind_components(ws, wd)
+    df_copy["Wind_u"] = u.magnitude
+    df_copy["Wind_v"] = v.magnitude
 
-    if resolution == "Estacional":
-        fig.add_trace(go.Bar(x=df.index, y=df[variable],
-                             name=y_title, marker_color="#FF6F61"))
-    else:
-        fig.add_trace(go.Scatter(x=df.index, y=df[variable],
-                                 mode='lines', name=y_title,
-                                 line=dict(color="#FF6F61", width=2)))
+    # Obtener la frecuencia correcta a partir del diccionario
+    freq = resoluciones[resolution]
+    aggregated = df_copy.resample(freq).mean()
 
-    fig.update_layout(
-        title=f"{resolution} - {y_title}",
-        xaxis_title="Fecha",
-        yaxis_title=y_title,
-        font=dict(family="Montserrat", size=14, color="white"),
-        xaxis=dict(tickfont=dict(size=12, color="white")),
-        yaxis=dict(tickfont=dict(size=12, color="white")),
-        legend=dict(font=dict(size=12, color="white")),
-        plot_bgcolor="#292929",
-        paper_bgcolor="#292929"
-    )
-    return fig
+    # Recalcular la dirección del viento a partir del promedio de u y v
+    u_avg = aggregated["Wind_u"].values * units("m/s")
+    v_avg = aggregated["Wind_v"].values * units("m/s")
+    wd_new = mpcalc.wind_direction(u_avg, v_avg)
+    aggregated["WindDir_Avg"] = wd_new.magnitude
+    # Calcular la velocidad resultante (promedio vectorial)
+    aggregated["WS_calc"] = np.sqrt(aggregated["Wind_u"]**2 + aggregated["Wind_v"]**2)
+    return aggregated
 
-# Función para crear gráfico combinado "Combinada"
-def create_puelche_graph(resolution):
-    if resolution == "Cada 15 minutos":
-        df = filtered_data
-    elif resolution == "Diaria":
-        df = daily_data
-    elif resolution == "Mensual":
-        df = monthly_data
-    elif resolution == "Estacional":
-        df = seasonal_data
-        df.set_index("Season_Year", inplace=True)
+filtered_data = resample_data(filtered_data, resolucion_seleccionada)
 
-    fig = make_subplots(
-        rows=4, cols=1,
+# Gráfico interactivo de las series de tiempo para las demás variables (excepto la rosa de los vientos)
+variables_a_graficar = [var for var in variables_seleccionadas if var != "Rosa de los Vientos"]
+if variables_a_graficar:
+    ts_fig = make_subplots(
+        rows=len(variables_a_graficar),
+        cols=1,
         shared_xaxes=True,
         vertical_spacing=0.05,
-        subplot_titles=("Temperatura (°C)", "Humedad (%)", "Velocidad del Viento (m/s)", "Dirección del Viento (°)")
+        subplot_titles=variables_a_graficar
     )
-
-    # Subgráficos
-    if resolution == "Estacional":
-        fig.add_trace(go.Bar(x=df.index, y=df["AirTC_Avg"],
-                             name="Temperatura", marker_color="#FF6F61"),
-                      row=1, col=1)
-        fig.add_trace(go.Bar(x=df.index, y=df["RH_Avg"],
-                             name="Humedad", marker_color="#4FC3F7"),
-                      row=2, col=1)
-        fig.add_trace(go.Bar(x=df.index, y=df["WS_ms_Avg"],
-                             name="Velocidad del Viento", marker_color="#81C784"),
-                      row=3, col=1)
-        fig.add_trace(go.Bar(x=df.index, y=df["WindDir_Avg"],
-                             name="Dirección del Viento", marker_color="#388E3C"),
-                      row=4, col=1)
-    else:
-        fig.add_trace(go.Scatter(x=df.index, y=df["AirTC_Avg"],
-                                 mode='lines', name="Temperatura",
-                                 line=dict(color="#FF6F61", width=2)),
-                      row=1, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df["RH_Avg"],
-                                 mode='lines', name="Humedad",
-                                 line=dict(color="#4FC3F7", width=2)),
-                      row=2, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df["WS_ms_Avg"],
-                                 mode='lines', name="Velocidad del Viento",
-                                 line=dict(color="#81C784", width=2)),
-                      row=3, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df["WindDir_Avg"],
-                                 mode='lines', name="Dirección del Viento",
-                                 line=dict(color="#388E3C", width=2)),
-                      row=4, col=1)
-
-    # Configuración
-    fig.update_layout(
-        height=900,
-        title=f"Combinada - Comparación de Variables Clave ({resolution})",
-        font=dict(family="Montserrat", size=14, color="white"),
-        xaxis=dict(tickfont=dict(size=12, color="white")),
-        yaxis=dict(tickfont=dict(size=12, color="white")),
-        legend=dict(font=dict(size=12, color="white")),
-        plot_bgcolor="#292929",
-        paper_bgcolor="#292929",
-        showlegend=True
+    for i, var in enumerate(variables_a_graficar):
+        ts_fig.add_trace(
+            go.Scatter(
+                x=filtered_data.index,
+                y=filtered_data[variables_disponibles[var]],
+                mode='lines',
+                name=var,
+                showlegend=False
+            ),
+            row=i+1,
+            col=1
+        )
+    # Ajustar los títulos de cada subgráfico
+    for annotation in ts_fig['layout']['annotations']:
+        annotation['font'] = dict(size=20, color='black')
+    ts_fig.update_layout(
+        height=300 * len(variables_a_graficar),
+        template="plotly_white",
+        xaxis=dict(fixedrange=True),
+        yaxis=dict(fixedrange=True)
     )
+    st.plotly_chart(ts_fig, use_container_width=True)
 
-    return fig
+# Mostrar la rosa de los vientos y las estadísticas juntas debajo de las series de tiempo
+col1, col2 = st.columns(2)
 
-# Selector de variable y resolución temporal
-st.markdown('<div class="chart-card">', unsafe_allow_html=True)
-variables = {"Combinada: Temperatura, Humedad y Viento": None}
-variables.update({col: col for col in data.columns})
-selected_var = st.selectbox("Selecciona una variable:", list(variables.keys()))
-resolution = st.selectbox("Selecciona la resolución temporal:", ["Cada 15 minutos", "Diaria", "Mensual", "Estacional"])
+with col1:
+    st.subheader("Rosa de los Vientos")
+    def create_wind_rose_windrose(df, figsize=(6,6)):
+        # Filtrar los datos necesarios
+        df_plot = df.dropna(subset=["WindDir_Avg", "WS_calc"]).copy()
+        wd = df_plot["WindDir_Avg"].values
+        ws = df_plot["WS_calc"].values
 
-# Mostrar el gráfico
-if selected_var == "Combinada: Temperatura, Humedad y Viento":
-    fig = create_puelche_graph(resolution)
-else:
-    fig = create_dynamic_graph(resolution, variables[selected_var], selected_var)
-st.plotly_chart(fig, use_container_width=True)
-st.markdown('</div>', unsafe_allow_html=True)
+        fig = plt.figure(figsize=figsize, constrained_layout=True)
+        ax = WindroseAxes.from_ax(fig=fig)
+        ax.bar(wd, ws, normed=True, opening=0.8, edgecolor='white', cmap=plt.cm.jet)
+        ax.set_legend(title="Velocidad (m/s)", fontsize=12, title_fontsize=14)
+        # Quitamos el título interno para mostrarlo como Streamlit
+        return fig
 
-# Botón de descarga
-st.subheader("Descargar Datos")
-csv = filtered_data.to_csv()
-st.download_button(
-    label="Descargar datos filtrados en CSV",
-    data=csv,
-    file_name="datos_filtrados_tres_hermanas.csv",
-    mime="text/csv"
-)
+    windrose_fig = create_wind_rose_windrose(filtered_data, figsize=(6,6))
+    buf = io.BytesIO()
+    windrose_fig.savefig(buf, format="png", bbox_inches="tight")
+    buf.seek(0)
+    st.image(buf, width=600)
+
+with col2:
+    st.subheader("Estadísticas Descriptivas")
+    st.dataframe(filtered_data.describe().T)
